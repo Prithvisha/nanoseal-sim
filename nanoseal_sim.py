@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 import numpy as np
 import streamlit as st
 import plotly.graph_objects as go
@@ -517,8 +516,6 @@ Reference: M.Sc. Nanoscience & Nanotechnology, University of Glasgow (2025)
             mime="text/plain"
         )
 
-if __name__ == "__main__":
-=======
 import numpy as np
 import streamlit as st
 import plotly.graph_objects as go
@@ -997,5 +994,4 @@ Reference: M.Sc. Nanoscience & Nanotechnology, University of Glasgow (2025)
         )
 
 if __name__ == "__main__":
->>>>>>> c63df9a3e78f0ea082de5608ca14c18e2bb54c02
     main()
