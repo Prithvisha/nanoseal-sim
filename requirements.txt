@@ -1,6 +1,14 @@
+<<<<<<< HEAD
 numpy
 scipy
 matplotlib
 streamlit
 pandas
+=======
+numpy
+scipy
+matplotlib
+streamlit
+pandas
+>>>>>>> c63df9a3e78f0ea082de5608ca14c18e2bb54c02
 plotly
