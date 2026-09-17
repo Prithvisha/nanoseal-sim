@@ -167,29 +167,80 @@ def get_basis_label(material_key):
         return MATERIAL_PHI_C[material_key]["basis"]
     return "estimated"
 
-# ── REACH / RoHS FLAGS (raw material components) ──────────────────
+# ── GLOBAL REGULATORY FRAMEWORKS ───────────────────────────────────
+REGIONS = ["UK / EU", "USA", "India", "China", "Japan", "South Korea"]
+
+REGIONAL_FRAMEWORKS = {
+    "UK / EU": [
+        {"name": "REACH", "full": "Registration, Evaluation, Authorisation and Restriction of Chemicals",
+         "scope": "All chemical substances placed on UK/EU market"},
+        {"name": "RoHS", "full": "Restriction of Hazardous Substances Directive",
+         "scope": "Restricts lead, cadmium, mercury, hexavalent chromium, PBB, PBDE, phthalates in electronics"},
+    ],
+    "USA": [
+        {"name": "TSCA", "full": "Toxic Substances Control Act",
+         "scope": "EPA chemical inventory registration for substances manufactured/imported to US"},
+        {"name": "Prop 65", "full": "California Proposition 65",
+         "scope": "Warning labelling for substances known to cause cancer/reproductive harm (California-specific)"},
+    ],
+    "India": [
+        {"name": "BIS", "full": "Bureau of Indian Standards — E-Waste (Management) Rules RoHS",
+         "scope": "India's RoHS-equivalent restriction on hazardous substances in electronics"},
+        {"name": "India REACH-equiv.", "full": "Chemical (Management and Safety) Rules (draft/under development)",
+         "scope": "India does not yet have a full REACH-equivalent; BIS + Factories Act chemical safety rules apply"},
+    ],
+    "China": [
+        {"name": "China RoHS 2", "full": "Management Methods for Restricted Use of Hazardous Substances",
+         "scope": "China's RoHS-equivalent, similar restricted substance list to EU RoHS"},
+        {"name": "China REACH", "full": "Measures for Environmental Management of New Chemical Substances (MEP Order 7)",
+         "scope": "China's REACH-equivalent chemical registration requirement"},
+    ],
+    "Japan": [
+        {"name": "J-Moss", "full": "Japan Management of Substances in Products",
+         "scope": "Japan's RoHS-equivalent labelling requirement for electronics"},
+        {"name": "CSCL", "full": "Chemical Substances Control Law",
+         "scope": "Japan's chemical substance registration and control framework"},
+    ],
+    "South Korea": [
+        {"name": "K-REACH", "full": "Act on Registration and Evaluation of Chemicals",
+         "scope": "South Korea's REACH-equivalent chemical registration"},
+        {"name": "Korea RoHS", "full": "Act for Resource Recycling of Electrical/Electronic Equipment",
+         "scope": "South Korea's RoHS-equivalent restricted substance rules"},
+    ],
+}
+
+# Material compliance status — same underlying grades are compliant across
+# regions when properly certified; region determines WHICH framework applies.
 REGULATORY_DB = {
-    "MWCNT (Multi-Wall Carbon Nanotubes)": {"REACH": True, "RoHS": True, "note": "REACH registered (EU); no RoHS-restricted substances"},
-    "Nano-clay (Organo-MMT)":               {"REACH": True, "RoHS": True, "note": "REACH registered; naturally occurring mineral, quaternary ammonium surface treatment REACH-compliant"},
-    "SiO2 nanoparticles (colloidal)":       {"REACH": True, "RoHS": True, "note": "REACH registered; silica is not RoHS-restricted"},
-    "ESD-grade HIPS/PETG/PP/ABS/PC":        {"REACH": True, "RoHS": True, "note": "Standard engineering plastics — REACH & RoHS compliant grades widely available"},
+    "MWCNT (Multi-Wall Carbon Nanotubes)": "No RoHS-restricted substances (Pb/Cd/Hg/Cr6+/PBB/PBDE/phthalates); chemical registration required per region's framework above",
+    "Nano-clay (Organo-MMT)":               "Naturally occurring mineral with quaternary ammonium surface treatment; not RoHS-restricted; chemical registration per region",
+    "SiO2 nanoparticles (colloidal)":       "Silica is not RoHS-restricted in any region; standard chemical registration applies",
+    "ESD-grade HIPS/PETG/PP/ABS/PC":        "Standard engineering plastics — RoHS/region-equivalent compliant grades widely available from all major suppliers",
 }
 
 # ── ENVIRONMENTAL FOOTPRINT (simplified estimate — clearly labelled) ─
-def estimate_co2_footprint(is_domestic=True, weight_kg=1.0):
+# Freight tiers instead of one fixed UK-centric route — user picks their
+# actual manufacturing location and the comparison origin.
+FREIGHT_FACTORS = {
+    "Domestic road (<500 km)":              0.012,
+    "Regional road/rail (500–3000 km)":     0.025,
+    "Intercontinental sea freight":         0.045,
+    "Intercontinental air freight (expedited)": 0.850,
+}
+
+MFG_LOCATIONS = ["Glasgow, UK", "AURIC, India", "Shenzhen, China", "California, USA", "Seoul, South Korea", "Osaka, Japan"]
+
+def estimate_co2_footprint_global(mfg_location, compare_to_domestic_weight_kg=1.0):
     """
     Simplified transport-only CO2e estimate. NOT a full LCA.
-    Domestic (UK road, <300 miles): ~0.10 kg CO2e/kg-km-equivalent, assumed 150 miles avg
-    Imported (sea freight Asia->UK + last-mile road): ~0.015 kg CO2e/tonne-km sea + air-freight premium if urgent
-    These are simplified DEFRA-style factors for illustration, not a certified LCA.
+    Shows the manufacturing location's own domestic freight vs. importing
+    the same weight of material from a typical intercontinental source.
     """
-    domestic_factor = 0.012   # kg CO2e per kg, UK road freight ~150 miles
-    import_sea_factor = 0.045 # kg CO2e per kg, sea freight Asia-UK + last mile
-    import_air_factor = 0.850 # kg CO2e per kg, air freight Asia-UK (if expedited)
-    domestic_co2 = weight_kg * domestic_factor
-    import_sea_co2 = weight_kg * import_sea_factor
-    import_air_co2 = weight_kg * import_air_factor
-    return domestic_co2, import_sea_co2, import_air_co2
+    domestic_co2 = compare_to_domestic_weight_kg * FREIGHT_FACTORS["Domestic road (<500 km)"]
+    regional_co2 = compare_to_domestic_weight_kg * FREIGHT_FACTORS["Regional road/rail (500–3000 km)"]
+    sea_co2 = compare_to_domestic_weight_kg * FREIGHT_FACTORS["Intercontinental sea freight"]
+    air_co2 = compare_to_domestic_weight_kg * FREIGHT_FACTORS["Intercontinental air freight (expedited)"]
+    return domestic_co2, regional_co2, sea_co2, air_co2
 
 def build_pdf_report(report_text, material_key, standard_key, compliant):
     """Builds a simple branded one-page PDF summary. Returns bytes."""
@@ -923,54 +974,71 @@ Tool:         NanoSeal Sim v2.0 | nanoseal-sim.streamlit.app
 
     # TAB 10 — COMPLIANCE & FOOTPRINT
     with tab10:
-        st.markdown("#### ✅ Regulatory Compliance (REACH / RoHS)")
-        st.markdown("Status of each raw material component used in your formulation.")
+        st.markdown("#### 🌍 Regulatory Compliance — Select Your Target Market")
+        st.markdown("Frameworks change by region. Pick where you're selling to see the applicable rules.")
 
-        reg_rows = []
-        for comp_name, info in REGULATORY_DB.items():
-            reg_rows.append({
-                "Component": comp_name,
-                "REACH": "✅ Compliant" if info["REACH"] else "❌ Not compliant",
-                "RoHS": "✅ Compliant" if info["RoHS"] else "❌ Not compliant",
-                "Note": info["note"]
-            })
-        st.dataframe(pd.DataFrame(reg_rows), use_container_width=True, hide_index=True)
-        st.caption("Regulatory status shown reflects commonly available REACH/RoHS-compliant grades of each material class. "
-                  "Always confirm the specific Certificate of Analysis (CoA) with your actual supplier batch.")
+        selected_region = st.selectbox("Target market / region", REGIONS)
+
+        st.markdown(f"**Applicable frameworks in {selected_region}:**")
+        for fw in REGIONAL_FRAMEWORKS[selected_region]:
+            st.markdown(f"- **{fw['name']}** — {fw['full']}  \n  *{fw['scope']}*")
 
         st.divider()
-        st.markdown("#### 🌱 Environmental Footprint Estimate")
-        st.markdown("Simplified transport-emissions comparison — domestic UK manufacturing vs. imported alternatives. "
-                    "This is an illustrative estimate based on typical freight emission factors, **not a certified LCA**.")
+        st.markdown(f"#### Material compliance status for {selected_region}")
 
-        fp_weight = st.number_input("Shipment weight for comparison (kg)", min_value=0.1, max_value=10000.0,
-                                    value=max(cnt_kg_month + clay_kg_month + sio2_kg_month, 1.0), step=0.5,
-                                    help="Defaults to your monthly raw material weight from the Scale-Up tab")
+        reg_rows = []
+        for comp_name, note in REGULATORY_DB.items():
+            reg_rows.append({
+                "Component": comp_name,
+                "Status": "✅ Compliant (standard grade)",
+                "Applicable frameworks": ", ".join(f["name"] for f in REGIONAL_FRAMEWORKS[selected_region]),
+                "Note": note
+            })
+        st.dataframe(pd.DataFrame(reg_rows), use_container_width=True, hide_index=True)
+        st.caption("Status shown reflects commonly available compliant grades of each material class. "
+                  "Always confirm the specific Certificate of Analysis (CoA) with your actual supplier batch and region-specific registration status — "
+                  "especially for India, where a full REACH-equivalent framework is still under development.")
 
-        dom_co2, sea_co2, air_co2 = estimate_co2_footprint(weight_kg=fp_weight)
+        st.divider()
+        st.markdown("#### 🌱 Environmental Footprint Estimate — Any Manufacturing Location")
+        st.markdown("Compare freight emissions from your actual manufacturing base against importing the same "
+                    "material intercontinentally. This is an illustrative estimate based on typical freight "
+                    "emission factors, **not a certified LCA**.")
 
-        fp1, fp2, fp3 = st.columns(3)
+        fp_col1, fp_col2 = st.columns(2)
+        with fp_col1:
+            mfg_location = st.selectbox("Your manufacturing location", MFG_LOCATIONS)
+        with fp_col2:
+            fp_weight = st.number_input("Shipment weight for comparison (kg)", min_value=0.1, max_value=10000.0,
+                                        value=max(cnt_kg_month + clay_kg_month + sio2_kg_month, 1.0), step=0.5,
+                                        help="Defaults to your monthly raw material weight from the Scale-Up tab")
+
+        dom_co2, reg_co2, sea_co2, air_co2 = estimate_co2_footprint_global(mfg_location, fp_weight)
+
+        fp1, fp2, fp3, fp4 = st.columns(4)
         with fp1:
-            st.metric("Domestic (UK road)", f"{dom_co2:.2f} kg CO₂e")
+            st.metric(f"Domestic (<500km from {mfg_location.split(',')[0]})", f"{dom_co2:.2f} kg CO₂e")
         with fp2:
-            st.metric("Imported (sea freight)", f"{sea_co2:.2f} kg CO₂e",
-                      delta=f"{sea_co2/dom_co2:.1f}× higher" if dom_co2 > 0 else None,
-                      delta_color="inverse")
+            st.metric("Regional (500–3000km)", f"{reg_co2:.2f} kg CO₂e",
+                      delta=f"{reg_co2/dom_co2:.1f}× higher" if dom_co2 > 0 else None, delta_color="inverse")
         with fp3:
-            st.metric("Imported (air freight)", f"{air_co2:.2f} kg CO₂e",
-                      delta=f"{air_co2/dom_co2:.1f}× higher" if dom_co2 > 0 else None,
-                      delta_color="inverse")
+            st.metric("Intercontinental (sea)", f"{sea_co2:.2f} kg CO₂e",
+                      delta=f"{sea_co2/dom_co2:.1f}× higher" if dom_co2 > 0 else None, delta_color="inverse")
+        with fp4:
+            st.metric("Intercontinental (air)", f"{air_co2:.2f} kg CO₂e",
+                      delta=f"{air_co2/dom_co2:.1f}× higher" if dom_co2 > 0 else None, delta_color="inverse")
 
         fig_fp = go.Figure(go.Bar(
-            x=["Domestic (UK road)", "Import (sea freight)", "Import (air freight)"],
-            y=[dom_co2, sea_co2, air_co2],
-            marker_color=["#1B5E20", "#E65100", "#B71C1C"]
+            x=["Domestic", "Regional", "Sea freight", "Air freight"],
+            y=[dom_co2, reg_co2, sea_co2, air_co2],
+            marker_color=["#1B5E20", "#F9A825", "#E65100", "#B71C1C"]
         ))
-        fig_fp.update_layout(title="Transport CO₂e Comparison", yaxis_title="kg CO₂e",
+        fig_fp.update_layout(title=f"Transport CO₂e from {mfg_location}", yaxis_title="kg CO₂e",
                             height=320, template="plotly_white")
         st.plotly_chart(fig_fp, use_container_width=True)
-        st.caption("Emission factors: domestic UK road ~0.012 kg CO₂e/kg (150 mile avg), sea freight Asia-UK ~0.045 kg CO₂e/kg, "
-                  "air freight Asia-UK ~0.850 kg CO₂e/kg. Simplified DEFRA-style factors for illustration.")
+        st.caption("Emission factors: domestic road <500km ~0.012 kg CO₂e/kg, regional road/rail 500–3000km ~0.025 kg CO₂e/kg, "
+                  "intercontinental sea freight ~0.045 kg CO₂e/kg, intercontinental air freight (expedited) ~0.850 kg CO₂e/kg. "
+                  "Simplified factors for illustration — actual figures depend on exact origin/destination and carrier.")
 
     # TAB 11 — SAVED FORMULATIONS
     with tab11:
