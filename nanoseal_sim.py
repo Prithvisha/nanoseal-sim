@@ -85,21 +85,53 @@ SIO2_PRICE_GBP = 350
 # ── LITERATURE-CITED PERCOLATION THRESHOLDS (wt% MWCNT) ──────────
 # Matrix-specific — thermoplastics percolate at higher loading than
 # epoxy due to melt-mixing dispersion vs. epoxy casting dispersion.
-# "cited": direct experimental measurement from named source.
-# "estimated": within the established 1-3 wt% thermoplastic range
-# (ScienceDirect review, span 30) but no material-specific paper found.
-MATERIAL_PHI_C = {
-    "HIPS (Standard ESD)":        {"phi_c": 1.5, "source": "estimated — styrenic thermoplastic, 1-3 wt% typical range"},
-    "PETG (Clear ESD)":           {"phi_c": 1.2, "source": "estimated — polyester-family thermoplastic"},
-    "PP (High-Temp ESD)":         {"phi_c": 2.0, "source": "cited — MWCNT in polypropylene matrix (span 29)"},
-    "ABS (Impact ESD)":           {"phi_c": 1.5, "source": "estimated — styrenic thermoplastic, 1-3 wt% typical range"},
-    "PC (Polycarbonate ESD)":     {"phi_c": 1.0, "source": "cited — PC-CNT composite (span 31, Nazarpour et al.)"},
-    "PET (Polyester ESD)":        {"phi_c": 1.2, "source": "estimated — polyester-family, comparable to PLA-CNT DC regime"},
-    "PS (Carrier Tape Standard)": {"phi_c": 1.5, "source": "estimated — styrenic thermoplastic, 1-3 wt% typical range"},
-    "PEEK (Carrier Tape HT)":     {"phi_c": 2.5, "source": "estimated — high-performance thermoplastic, upper range"},
-    "PC (Carrier Tape Clear)":    {"phi_c": 1.0, "source": "cited — PC-CNT composite (span 31, Nazarpour et al.)"},
+CITATIONS = {
+    "epoxy_mohan": {
+        "authors": "Mohan, N. et al.",
+        "year": "2019",
+        "title": "Determination of electrical percolation threshold of carbon nanotube-based epoxy nanocomposites and its experimental validation",
+        "journal": "IET Science, Measurement & Technology",
+        "finding": "Measured 0.17 wt% experimentally; 0.18 wt% theoretical (modified micromechanics model)",
+        "url": "https://ietresearch.onlinelibrary.wiley.com/doi/10.1049/iet-smt.2019.0011"
+    },
+    "pp_mwcnt": {
+        "authors": "Multiple sources, MWCNT/PP composite literature",
+        "year": "various",
+        "title": "MWCNT percolation in polypropylene matrix",
+        "journal": "Reported across PP/CNT composite studies",
+        "finding": "Percolation threshold of approx. 2.0 wt% for high-aspect-ratio MWCNT in PP",
+        "url": "https://www.researchgate.net/publication/226511004"
+    },
+    "pc_cnt": {
+        "authors": "Study on LLDPE/PC conductive polymer composites",
+        "year": "2022",
+        "title": "Effect of Various Conductive Filler Additions on the Percolation Threshold of Conductive Polymer Composites",
+        "journal": "Polymer Composites research",
+        "finding": "PC-CNT percolation threshold approx. 1 wt%; PC-CF approx. 10 wt%",
+        "url": "https://www.researchgate.net/publication/363787753"
+    },
+    "review_range": {
+        "authors": "ScienceDirect Topics review",
+        "year": "ongoing",
+        "title": "Electrical Percolation Threshold — an overview",
+        "journal": "ScienceDirect Topics (aggregated review)",
+        "finding": "CNT percolation in polymers ranges 0.0025-15 wt%; thermoplastics typically 1-3 wt%",
+        "url": "https://www.sciencedirect.com/topics/engineering/electrical-percolation-threshold"
+    },
 }
-DEFAULT_PHI_C_EPOXY = 0.18  # cited — Mohan et al. 2019, IET Science, CNT-epoxy (span 38)
+
+MATERIAL_PHI_C = {
+    "HIPS (Standard ESD)":        {"phi_c": 1.5, "cite": "review_range", "basis": "estimated"},
+    "PETG (Clear ESD)":           {"phi_c": 1.2, "cite": "review_range", "basis": "estimated"},
+    "PP (High-Temp ESD)":         {"phi_c": 2.0, "cite": "pp_mwcnt",     "basis": "cited"},
+    "ABS (Impact ESD)":           {"phi_c": 1.5, "cite": "review_range", "basis": "estimated"},
+    "PC (Polycarbonate ESD)":     {"phi_c": 1.0, "cite": "pc_cnt",       "basis": "cited"},
+    "PET (Polyester ESD)":        {"phi_c": 1.2, "cite": "review_range", "basis": "estimated"},
+    "PS (Carrier Tape Standard)": {"phi_c": 1.5, "cite": "review_range", "basis": "estimated"},
+    "PEEK (Carrier Tape HT)":     {"phi_c": 2.5, "cite": "review_range", "basis": "estimated"},
+    "PC (Carrier Tape Clear)":    {"phi_c": 1.0, "cite": "pc_cnt",       "basis": "cited"},
+}
+DEFAULT_PHI_C_EPOXY = 0.18  # CITATIONS["epoxy_mohan"]
 
 # ── PHYSICS MODELS ────────────────────────────────────────────────
 def get_phi_c(material_key):
@@ -582,11 +614,12 @@ STANDARDS COMPLIANCE SUMMARY
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 METHODOLOGY
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ESD model:    Percolation theory (power law, t=1.3, phi_c=0.18 wt%)
+ESD model:    Percolation theory (power law, t=1.3, phi_c={get_phi_c(material_key)} wt% for {material_key})
 MVTR model:   Nielsen tortuous path (tau = 1 + alpha*phi/2)
 Hardness:     Halpin-Tsai composite mechanics
 Thermal:      Fourier conduction (R = t/k)
-Reference:    M.Sc. Nanoscience, University of Glasgow (2025)
+Percolation threshold source: see Calibrate & Compare tab for full citation
+Academic reference: M.Sc. Nanoscience, University of Glasgow (2025)
 Tool:         NanoSeal Sim v2.0 | nanoseal-sim.streamlit.app
 """
         st.code(report, language=None)
@@ -609,13 +642,28 @@ Tool:         NanoSeal Sim v2.0 | nanoseal-sim.streamlit.app
                 override_key = f"calibrated_phi_c__{mat_name}"
                 current_val = st.session_state.get(override_key, info["phi_c"])
                 is_overridden = override_key in st.session_state
+                cite_short = "Your lab data" if is_overridden else CITATIONS[info["cite"]]["authors"]
                 phi_rows.append({
                     "Material": mat_name,
                     "Percolation threshold (wt%)": f"{current_val}" + (" 🔧" if is_overridden else ""),
-                    "Source": "Your lab data" if is_overridden else info["source"]
+                    "Basis": "measured" if is_overridden else info["basis"],
+                    "Reference": cite_short
                 })
         st.dataframe(pd.DataFrame(phi_rows), use_container_width=True, hide_index=True)
         st.caption("🔧 = calibrated with your own measured data, overriding the literature value")
+
+        with st.expander("📚 Full references — click to see every citation in detail"):
+            st.markdown(f"**Epoxy baseline (used only as fallback):**")
+            c = CITATIONS["epoxy_mohan"]
+            st.markdown(f"*{c['authors']} ({c['year']}).* **{c['title']}.** {c['journal']}. "
+                       f"Finding: {c['finding']}. [Source]({c['url']})")
+            st.divider()
+            for key, c in CITATIONS.items():
+                if key == "epoxy_mohan":
+                    continue
+                st.markdown(f"*{c['authors']} ({c['year']}).* **{c['title']}.** {c['journal']}. "
+                           f"Finding: {c['finding']}. [Source]({c['url']})")
+                st.markdown("")
 
         st.divider()
         st.markdown("#### Calibrate one material against your own lab data")
