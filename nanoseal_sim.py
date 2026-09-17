@@ -93,7 +93,7 @@ def esd_surface_resistance(cnt_wt, thickness_nm, material_key):
             return R_base, 1e4 <= R_base <= 1e11
         R = R_base * (1 - min(cnt_wt / 0.5, 0.9))
         return max(R, 1e3), 1e4 <= R <= 1e11
-    phi_c = 0.18
+    phi_c = st.session_state.get("calibrated_phi_c", 0.18)
     if cnt_wt < phi_c:
         R = R_base * (1 - cnt_wt / phi_c * 0.5)
     else:
@@ -299,14 +299,15 @@ def main():
     st.divider()
 
     # ── TABS ───────────────────────────────────────────────────────
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
         "📈 ESD Analysis",
         "💧 MVTR Analysis",
         "🌡️ Thermal",
         "🔀 Substrate Compare",
         "🌍 Standards Compare",
         "🤖 Auto-Optimiser",
-        "📋 Report"
+        "📋 Report",
+        "🎯 Calibrate & Compare"
     ])
 
     # TAB 1 — ESD
@@ -563,6 +564,77 @@ Tool:         NanoSeal Sim v2.0 | nanoseal-sim.streamlit.app
                            data=report,
                            file_name=f"nanoseal_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.txt",
                            mime="text/plain")
+
+    # TAB 8 — CALIBRATE & COMPARE
+    with tab8:
+        st.markdown("#### 🎯 Calibrate against real lab data")
+        st.markdown("If you've run a physical CNT coating test, enter your measured percolation "
+                    "point below to tune the model to your actual production process — instead of "
+                    "the literature default of 0.18 wt%.")
+
+        cal1, cal2 = st.columns(2)
+        with cal1:
+            measured_cnt = st.number_input("Measured CNT wt% at compliance threshold",
+                                           min_value=0.05, max_value=3.0, value=0.18, step=0.01,
+                                           help="The lowest CNT loading where your real sample first met the ESD spec")
+        with cal2:
+            if st.button("✅ Apply calibration", type="primary"):
+                st.session_state["calibrated_phi_c"] = measured_cnt
+                st.success(f"Model calibrated — percolation threshold set to {measured_cnt} wt%. "
+                          "All tabs now use your real production data.")
+
+        current_phi = st.session_state.get("calibrated_phi_c", 0.18)
+        if current_phi != 0.18:
+            st.info(f"🔧 Currently calibrated to **{current_phi} wt%** (literature default: 0.18 wt%)")
+        else:
+            st.caption("Currently using literature default (0.18 wt%) — no calibration applied yet.")
+
+        if st.button("↺ Reset to literature default"):
+            st.session_state["calibrated_phi_c"] = 0.18
+            st.rerun()
+
+        st.divider()
+
+        st.markdown("#### ⚖️ Compare against an imported material")
+        st.markdown("Paste a competitor or supplier spec sheet's numbers to see how your NanoSeal "
+                    "formulation compares — useful for supplier negotiations or customer proposals.")
+
+        comp1, comp2, comp3 = st.columns(3)
+        with comp1:
+            competitor_name = st.text_input("Competitor / import name", value="Imported (Japan)")
+        with comp2:
+            competitor_esd = st.number_input("Their ESD resistance (Ω/sq)",
+                                             min_value=1e2, max_value=1e14, value=1e8, format="%.2e")
+        with comp3:
+            competitor_price = st.number_input(f"Their price ({currency.split()[0]}/m²)",
+                                                min_value=0.0, value=0.45, step=0.01, format="%.4f")
+
+        your_price = cost_m2 if currency == "GBP £" else cost_m2  # cost_m2 always computed in GBP base
+        your_price_display = fmt_currency(cost_m2)
+
+        comparison_rows = [
+            ["Property", "Your NanoSeal formulation", competitor_name],
+            ["ESD Resistance (Ω/sq)", f"{R_surface:.2e}", f"{competitor_esd:.2e}"],
+            ["JEDEC Compliant", "✅ Yes" if compliance["ESD"] else "❌ No",
+             "✅ Yes" if std["esd_min"] <= competitor_esd <= std["esd_max"] else "❌ No"],
+            ["Price per m²", your_price_display, f"{currency.split()[0]}{competitor_price:.4f}"],
+            ["Origin", "UK-manufactured (Glasgow)", "Imported"],
+            ["Lead time", "2–5 days (domestic)", "6–14 weeks (typical import)"],
+        ]
+        df_comp = pd.DataFrame(comparison_rows[1:], columns=comparison_rows[0])
+        st.dataframe(df_comp, use_container_width=True, hide_index=True)
+
+        gbp_competitor = competitor_price if currency == "GBP £" else competitor_price
+        price_diff_pct = ((cost_m2 - gbp_competitor) / gbp_competitor * 100) if gbp_competitor > 0 else 0
+        if price_diff_pct < 0:
+            st.success(f"Your formulation is **{abs(price_diff_pct):.1f}% cheaper** than {competitor_name}, "
+                      f"with a {'6–14 week' if 'import' in competitor_name.lower() else 'comparable'} "
+                      f"lead-time advantage from domestic UK manufacturing.")
+        elif price_diff_pct > 0:
+            st.warning(f"Your formulation is currently **{price_diff_pct:.1f}% more expensive** than "
+                      f"{competitor_name} — try the Auto-Optimiser tab to find a cheaper compliant mix.")
+        else:
+            st.info("Prices are equal — differentiate on lead time and JEDEC compliance instead.")
 
 if __name__ == "__main__":
     main()
