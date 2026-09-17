@@ -4,6 +4,11 @@ import plotly.graph_objects as go
 import plotly.express as px
 import pandas as pd
 import datetime
+try:
+    from fpdf import FPDF
+    PDF_AVAILABLE = True
+except ImportError:
+    PDF_AVAILABLE = False
 
 # ── CONSTANTS ─────────────────────────────────────────────────────
 USD_GBP = 0.79
@@ -144,6 +149,81 @@ def get_phi_c(material_key):
     if material_key in MATERIAL_PHI_C:
         return MATERIAL_PHI_C[material_key]["phi_c"]
     return DEFAULT_PHI_C_EPOXY
+
+def get_uncertainty_pct(material_key):
+    """Confidence band width — tighter for measured/cited data, wider for estimates."""
+    override_key = f"calibrated_phi_c__{material_key}"
+    if override_key in st.session_state:
+        return 0.05   # your own measured data — ±5%
+    if material_key in MATERIAL_PHI_C and MATERIAL_PHI_C[material_key]["basis"] == "cited":
+        return 0.15   # published, material-specific paper — ±15%
+    return 0.40        # estimated from a general range — ±40%
+
+def get_basis_label(material_key):
+    override_key = f"calibrated_phi_c__{material_key}"
+    if override_key in st.session_state:
+        return "measured"
+    if material_key in MATERIAL_PHI_C:
+        return MATERIAL_PHI_C[material_key]["basis"]
+    return "estimated"
+
+# ── REACH / RoHS FLAGS (raw material components) ──────────────────
+REGULATORY_DB = {
+    "MWCNT (Multi-Wall Carbon Nanotubes)": {"REACH": True, "RoHS": True, "note": "REACH registered (EU); no RoHS-restricted substances"},
+    "Nano-clay (Organo-MMT)":               {"REACH": True, "RoHS": True, "note": "REACH registered; naturally occurring mineral, quaternary ammonium surface treatment REACH-compliant"},
+    "SiO2 nanoparticles (colloidal)":       {"REACH": True, "RoHS": True, "note": "REACH registered; silica is not RoHS-restricted"},
+    "ESD-grade HIPS/PETG/PP/ABS/PC":        {"REACH": True, "RoHS": True, "note": "Standard engineering plastics — REACH & RoHS compliant grades widely available"},
+}
+
+# ── ENVIRONMENTAL FOOTPRINT (simplified estimate — clearly labelled) ─
+def estimate_co2_footprint(is_domestic=True, weight_kg=1.0):
+    """
+    Simplified transport-only CO2e estimate. NOT a full LCA.
+    Domestic (UK road, <300 miles): ~0.10 kg CO2e/kg-km-equivalent, assumed 150 miles avg
+    Imported (sea freight Asia->UK + last-mile road): ~0.015 kg CO2e/tonne-km sea + air-freight premium if urgent
+    These are simplified DEFRA-style factors for illustration, not a certified LCA.
+    """
+    domestic_factor = 0.012   # kg CO2e per kg, UK road freight ~150 miles
+    import_sea_factor = 0.045 # kg CO2e per kg, sea freight Asia-UK + last mile
+    import_air_factor = 0.850 # kg CO2e per kg, air freight Asia-UK (if expedited)
+    domestic_co2 = weight_kg * domestic_factor
+    import_sea_co2 = weight_kg * import_sea_factor
+    import_air_co2 = weight_kg * import_air_factor
+    return domestic_co2, import_sea_co2, import_air_co2
+
+def build_pdf_report(report_text, material_key, standard_key, compliant):
+    """Builds a simple branded one-page PDF summary. Returns bytes."""
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_fill_color(13, 27, 75)
+    pdf.rect(0, 0, 210, 28, 'F')
+    pdf.set_text_color(201, 168, 76)
+    pdf.set_font("Helvetica", "B", 18)
+    pdf.set_xy(10, 8)
+    pdf.cell(0, 10, "NanoSeal Sim - Formulation Report", ln=1)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_xy(10, 19)
+    pdf.cell(0, 6, "Sahastra Mudra Ltd. (SC848171)  |  nanoseal-sim.streamlit.app", ln=1)
+
+    pdf.set_text_color(20, 20, 20)
+    pdf.set_xy(10, 34)
+    pdf.set_font("Helvetica", "B", 11)
+    status_txt = "COMPLIANT" if compliant else "NOT COMPLIANT"
+    pdf.cell(0, 8, f"Material: {material_key}  |  Standard: {standard_key}  |  Status: {status_txt}", ln=1)
+
+    pdf.set_font("Courier", "", 8)
+    pdf.set_xy(10, 44)
+    for line in report_text.split("\n"):
+        safe_line = line.encode("latin-1", "replace").decode("latin-1")
+        pdf.multi_cell(0, 4, safe_line)
+
+    pdf.set_y(-15)
+    pdf.set_font("Helvetica", "I", 7)
+    pdf.set_text_color(120, 120, 120)
+    pdf.cell(0, 10, f"Generated {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')} | Prithviraj Hiralal Chowdhary, M.Sc. Nanoscience, University of Glasgow", 0, 0, 'C')
+
+    return bytes(pdf.output(dest='S'))
 
 def esd_surface_resistance(cnt_wt, thickness_nm, material_key):
     mat = SUBSTRATE_DB[material_key]
@@ -332,12 +412,17 @@ def main():
         st.error(f"❌ **NOT COMPLIANT** with {standard_key} — Failing: {', '.join(fails)}")
 
     # ── METRICS ROW ────────────────────────────────────────────────
+    unc_pct = get_uncertainty_pct(material_key)
+    basis_lbl = get_basis_label(material_key)
+    R_low, R_high = R_surface * (1 - unc_pct), R_surface * (1 + unc_pct)
+
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
         st.metric("ESD Resistance", f"{R_surface:.2e} Ω/sq",
                   delta="✅ Pass" if compliance["ESD"] else "❌ Fail",
                   delta_color="normal" if compliance["ESD"] else "inverse")
         st.caption(f"Target: {std['esd_min']:.0e}–{std['esd_max']:.0e} Ω/sq")
+        st.caption(f"±{unc_pct*100:.0f}% range ({basis_lbl}): {R_low:.1e}–{R_high:.1e}")
     with c2:
         st.metric("MVTR", f"{mvtr:.4f} g/m²/day",
                   delta=f"{mvtr_improve:.1f}× better | {'✅' if compliance['MVTR'] else '❌'}",
@@ -361,7 +446,7 @@ def main():
     st.divider()
 
     # ── TABS ───────────────────────────────────────────────────────
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
         "📈 ESD Analysis",
         "💧 MVTR Analysis",
         "🌡️ Thermal",
@@ -369,14 +454,24 @@ def main():
         "🌍 Standards Compare",
         "🤖 Auto-Optimiser",
         "📋 Report",
-        "🎯 Calibrate & Compare"
+        "🎯 Calibrate & Compare",
+        "🏭 Scale-Up Calculator",
+        "✅ Compliance & Footprint",
+        "💾 Saved Formulations"
     ])
 
     # TAB 1 — ESD
     with tab1:
         cnt_range = np.linspace(0.01, 5.0, 200)
         R_range = [esd_surface_resistance(c, thickness_nm, material_key)[0] for c in cnt_range]
+        R_range_low = [r * (1 - unc_pct) for r in R_range]
+        R_range_high = [r * (1 + unc_pct) for r in R_range]
         fig = go.Figure()
+        fig.add_trace(go.Scatter(x=cnt_range + cnt_range[::-1],
+                                  y=R_range_high + R_range_low[::-1],
+                                  fill='toself', fillcolor='rgba(26,35,126,0.12)',
+                                  line=dict(width=0), showlegend=True,
+                                  name=f"±{unc_pct*100:.0f}% confidence ({basis_lbl})"))
         fig.add_trace(go.Scatter(x=cnt_range, y=R_range, mode='lines',
                                   name=material_key, line=dict(color='#1A237E', width=2.5)))
         fig.add_hrect(y0=std["esd_min"], y1=std["esd_max"],
@@ -388,9 +483,10 @@ def main():
                           xaxis_title="CNT (wt%)", yaxis_title="Resistance (Ω/sq)",
                           yaxis_type="log", height=380, template="plotly_white")
         st.plotly_chart(fig, use_container_width=True)
-        st.info(f"**Percolation threshold:** ~0.18 wt% for most polymer substrates. "
-                f"Above this, resistance drops 7–8 orders of magnitude. "
-                f"**Optimal loading for {standard_key}:** {std['esd_min']:.0e}–{std['esd_max']:.0e} Ω/sq compliance.")
+        st.info(f"**Percolation threshold for {material_key}:** {get_phi_c(material_key)} wt% "
+                f"({basis_lbl} — see Calibrate & Compare tab for source). "
+                f"Above this, resistance drops several orders of magnitude. "
+                f"Shaded band reflects prediction confidence: cited data ±15%, estimated ±40%, your own measured data ±5%.")
 
     # TAB 2 — MVTR
     with tab2:
@@ -623,10 +719,19 @@ Academic reference: M.Sc. Nanoscience, University of Glasgow (2025)
 Tool:         NanoSeal Sim v2.0 | nanoseal-sim.streamlit.app
 """
         st.code(report, language=None)
-        st.download_button("📥 Download report",
+        st.download_button("📥 Download report (.txt)",
                            data=report,
                            file_name=f"nanoseal_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.txt",
                            mime="text/plain")
+
+        if PDF_AVAILABLE:
+            pdf_bytes = build_pdf_report(report, material_key, standard_key, compliance["Overall"])
+            st.download_button("📄 Download report (.pdf) — for customers/suppliers",
+                               data=pdf_bytes,
+                               file_name=f"nanoseal_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                               mime="application/pdf")
+        else:
+            st.caption("PDF export requires the `fpdf2` package — add it to requirements.txt to enable.")
 
     # TAB 8 — CALIBRATE & COMPARE
     with tab8:
@@ -731,6 +836,169 @@ Tool:         NanoSeal Sim v2.0 | nanoseal-sim.streamlit.app
                       f"{competitor_name} — try the Auto-Optimiser tab to find a cheaper compliant mix.")
         else:
             st.info("Prices are equal — differentiate on lead time and JEDEC compliance instead.")
+
+    # TAB 9 — SCALE-UP CALCULATOR
+    with tab9:
+        st.markdown("#### 🏭 Production Scale-Up Calculator")
+        st.markdown("Convert your formulation into real monthly raw material quantities — "
+                    "and check against typical supplier minimum order quantities (MOQs).")
+
+        su1, su2 = st.columns(2)
+        with su1:
+            monthly_units = st.number_input("Monthly production volume (units/trays)",
+                                            min_value=100, max_value=1000000, value=3000, step=100)
+        with su2:
+            unit_area_cm2 = st.number_input("Area per unit (cm²)", min_value=10, max_value=5000,
+                                            value=500, step=10,
+                                            help="Approx. surface area of one tray/unit being coated")
+
+        total_m2_month = monthly_units * (unit_area_cm2 / 10000)
+        cnt_kg_month = (coat_wt * (cnt_wt/100) / 1000) * total_m2_month
+        clay_kg_month = (coat_wt * (clay_wt/100) / 1000) * total_m2_month
+        sio2_kg_month = (coat_wt * (sio2_wt/100) / 1000) * total_m2_month
+        total_cost_month = cost_m2 * total_m2_month
+
+        st.divider()
+        sc1, sc2, sc3, sc4 = st.columns(4)
+        with sc1:
+            st.metric("Total area/month", f"{total_m2_month:.1f} m²")
+        with sc2:
+            st.metric("CNT needed/month", f"{cnt_kg_month*1000:.1f} g")
+        with sc3:
+            st.metric("Nano-clay needed/month", f"{clay_kg_month*1000:.1f} g")
+        with sc4:
+            st.metric("Total material cost/month", fmt_currency(total_cost_month))
+
+        st.divider()
+        st.markdown("#### Supplier MOQ check")
+        moq_rows = [
+            ["Raw material", "Your monthly need", "Typical small-batch MOQ", "Status"],
+            ["MWCNT dispersion (e.g. Thomas Swan)", f"{cnt_kg_month*1000:.1f} g",
+             "500 ml (~5-10 g equiv.)",
+             "✅ Within range" if cnt_kg_month*1000 <= 500 else "⚠️ May need bulk order — contact supplier"],
+            ["Nano-clay (e.g. Imerys Cloisite)", f"{clay_kg_month*1000:.1f} g",
+             "1 kg minimum",
+             "✅ Within range" if clay_kg_month <= 1 else "⚠️ Exceeds typical small-batch MOQ — good, justifies bulk pricing"],
+            ["SiO2 colloidal (e.g. Evonik)", f"{sio2_kg_month*1000:.1f} g",
+             "500 g minimum",
+             "✅ Within range" if sio2_kg_month*1000 <= 500 else "⚠️ May need bulk order"],
+        ]
+        df_moq = pd.DataFrame(moq_rows[1:], columns=moq_rows[0])
+        st.dataframe(df_moq, use_container_width=True, hide_index=True)
+        st.caption("MOQ figures are typical small-batch estimates from the Raw Materials & Supply Chain document — confirm exact terms directly with each supplier.")
+
+        st.divider()
+        st.markdown("#### Annual projection")
+        annual_cost = total_cost_month * 12
+        st.metric("Projected annual material cost", fmt_currency(annual_cost))
+
+    # TAB 10 — COMPLIANCE & FOOTPRINT
+    with tab10:
+        st.markdown("#### ✅ Regulatory Compliance (REACH / RoHS)")
+        st.markdown("Status of each raw material component used in your formulation.")
+
+        reg_rows = []
+        for comp_name, info in REGULATORY_DB.items():
+            reg_rows.append({
+                "Component": comp_name,
+                "REACH": "✅ Compliant" if info["REACH"] else "❌ Not compliant",
+                "RoHS": "✅ Compliant" if info["RoHS"] else "❌ Not compliant",
+                "Note": info["note"]
+            })
+        st.dataframe(pd.DataFrame(reg_rows), use_container_width=True, hide_index=True)
+        st.caption("Regulatory status shown reflects commonly available REACH/RoHS-compliant grades of each material class. "
+                  "Always confirm the specific Certificate of Analysis (CoA) with your actual supplier batch.")
+
+        st.divider()
+        st.markdown("#### 🌱 Environmental Footprint Estimate")
+        st.markdown("Simplified transport-emissions comparison — domestic UK manufacturing vs. imported alternatives. "
+                    "This is an illustrative estimate based on typical freight emission factors, **not a certified LCA**.")
+
+        fp_weight = st.number_input("Shipment weight for comparison (kg)", min_value=0.1, max_value=10000.0,
+                                    value=max(cnt_kg_month + clay_kg_month + sio2_kg_month, 1.0), step=0.5,
+                                    help="Defaults to your monthly raw material weight from the Scale-Up tab")
+
+        dom_co2, sea_co2, air_co2 = estimate_co2_footprint(weight_kg=fp_weight)
+
+        fp1, fp2, fp3 = st.columns(3)
+        with fp1:
+            st.metric("Domestic (UK road)", f"{dom_co2:.2f} kg CO₂e")
+        with fp2:
+            st.metric("Imported (sea freight)", f"{sea_co2:.2f} kg CO₂e",
+                      delta=f"{sea_co2/dom_co2:.1f}× higher" if dom_co2 > 0 else None,
+                      delta_color="inverse")
+        with fp3:
+            st.metric("Imported (air freight)", f"{air_co2:.2f} kg CO₂e",
+                      delta=f"{air_co2/dom_co2:.1f}× higher" if dom_co2 > 0 else None,
+                      delta_color="inverse")
+
+        fig_fp = go.Figure(go.Bar(
+            x=["Domestic (UK road)", "Import (sea freight)", "Import (air freight)"],
+            y=[dom_co2, sea_co2, air_co2],
+            marker_color=["#1B5E20", "#E65100", "#B71C1C"]
+        ))
+        fig_fp.update_layout(title="Transport CO₂e Comparison", yaxis_title="kg CO₂e",
+                            height=320, template="plotly_white")
+        st.plotly_chart(fig_fp, use_container_width=True)
+        st.caption("Emission factors: domestic UK road ~0.012 kg CO₂e/kg (150 mile avg), sea freight Asia-UK ~0.045 kg CO₂e/kg, "
+                  "air freight Asia-UK ~0.850 kg CO₂e/kg. Simplified DEFRA-style factors for illustration.")
+
+    # TAB 11 — SAVED FORMULATIONS
+    with tab11:
+        st.markdown("#### 💾 Save & Compare Formulations")
+        st.markdown("Save your current formulation to compare multiple candidates side by side — "
+                    "useful when presenting options to a customer.")
+
+        if "saved_formulations" not in st.session_state:
+            st.session_state["saved_formulations"] = []
+
+        sf1, sf2 = st.columns([3, 1])
+        with sf1:
+            formulation_label = st.text_input("Label for this formulation", value=f"Option {len(st.session_state['saved_formulations'])+1}")
+        with sf2:
+            st.write("")
+            st.write("")
+            if st.button("💾 Save current formulation", type="primary"):
+                st.session_state["saved_formulations"].append({
+                    "Label": formulation_label,
+                    "Material": material_key,
+                    "CNT wt%": cnt_wt,
+                    "Clay wt%": clay_wt,
+                    "SiO2 wt%": sio2_wt,
+                    "Thickness (nm)": thickness_nm,
+                    "ESD (Ω/sq)": f"{R_surface:.2e}",
+                    "MVTR (g/m²/day)": f"{mvtr:.4f}",
+                    "Hardness": pencil,
+                    "Cost/m²": fmt_currency(cost_m2),
+                    "Compliant": "✅ Yes" if compliance["Overall"] else "❌ No",
+                })
+                st.success(f"Saved as '{formulation_label}'")
+                st.rerun()
+
+        st.divider()
+
+        if st.session_state["saved_formulations"]:
+            df_saved = pd.DataFrame(st.session_state["saved_formulations"])
+            st.dataframe(df_saved, use_container_width=True, hide_index=True)
+
+            del_col1, del_col2 = st.columns([3, 1])
+            with del_col1:
+                to_delete = st.selectbox("Remove a saved formulation",
+                                         ["—"] + [f["Label"] for f in st.session_state["saved_formulations"]])
+            with del_col2:
+                st.write("")
+                st.write("")
+                if st.button("🗑️ Remove") and to_delete != "—":
+                    st.session_state["saved_formulations"] = [
+                        f for f in st.session_state["saved_formulations"] if f["Label"] != to_delete
+                    ]
+                    st.rerun()
+
+            if st.button("🧹 Clear all saved formulations"):
+                st.session_state["saved_formulations"] = []
+                st.rerun()
+        else:
+            st.info("No formulations saved yet — adjust the sliders, then click 'Save current formulation' above.")
 
 if __name__ == "__main__":
     main()

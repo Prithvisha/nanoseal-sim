@@ -1,6 +1,7 @@
+streamlit
 numpy
 scipy
 matplotlib
-streamlit
 pandas
 plotly
+fpdf2
