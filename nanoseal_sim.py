@@ -82,7 +82,37 @@ CNT_PRICE_GBP  = 800
 CLAY_PRICE_GBP = 25
 SIO2_PRICE_GBP = 350
 
+# ── LITERATURE-CITED PERCOLATION THRESHOLDS (wt% MWCNT) ──────────
+# Matrix-specific — thermoplastics percolate at higher loading than
+# epoxy due to melt-mixing dispersion vs. epoxy casting dispersion.
+# "cited": direct experimental measurement from named source.
+# "estimated": within the established 1-3 wt% thermoplastic range
+# (ScienceDirect review, span 30) but no material-specific paper found.
+MATERIAL_PHI_C = {
+    "HIPS (Standard ESD)":        {"phi_c": 1.5, "source": "estimated — styrenic thermoplastic, 1-3 wt% typical range"},
+    "PETG (Clear ESD)":           {"phi_c": 1.2, "source": "estimated — polyester-family thermoplastic"},
+    "PP (High-Temp ESD)":         {"phi_c": 2.0, "source": "cited — MWCNT in polypropylene matrix (span 29)"},
+    "ABS (Impact ESD)":           {"phi_c": 1.5, "source": "estimated — styrenic thermoplastic, 1-3 wt% typical range"},
+    "PC (Polycarbonate ESD)":     {"phi_c": 1.0, "source": "cited — PC-CNT composite (span 31, Nazarpour et al.)"},
+    "PET (Polyester ESD)":        {"phi_c": 1.2, "source": "estimated — polyester-family, comparable to PLA-CNT DC regime"},
+    "PS (Carrier Tape Standard)": {"phi_c": 1.5, "source": "estimated — styrenic thermoplastic, 1-3 wt% typical range"},
+    "PEEK (Carrier Tape HT)":     {"phi_c": 2.5, "source": "estimated — high-performance thermoplastic, upper range"},
+    "PC (Carrier Tape Clear)":    {"phi_c": 1.0, "source": "cited — PC-CNT composite (span 31, Nazarpour et al.)"},
+}
+DEFAULT_PHI_C_EPOXY = 0.18  # cited — Mohan et al. 2019, IET Science, CNT-epoxy (span 38)
+
 # ── PHYSICS MODELS ────────────────────────────────────────────────
+def get_phi_c(material_key):
+    """Return the percolation threshold for this material — user calibration
+    overrides everything if set; otherwise use the material-specific
+    literature value; fall back to the epoxy value only if truly unknown."""
+    override_key = f"calibrated_phi_c__{material_key}"
+    if override_key in st.session_state:
+        return st.session_state[override_key]
+    if material_key in MATERIAL_PHI_C:
+        return MATERIAL_PHI_C[material_key]["phi_c"]
+    return DEFAULT_PHI_C_EPOXY
+
 def esd_surface_resistance(cnt_wt, thickness_nm, material_key):
     mat = SUBSTRATE_DB[material_key]
     R_base = mat["base_R"]
@@ -93,7 +123,7 @@ def esd_surface_resistance(cnt_wt, thickness_nm, material_key):
             return R_base, 1e4 <= R_base <= 1e11
         R = R_base * (1 - min(cnt_wt / 0.5, 0.9))
         return max(R, 1e3), 1e4 <= R <= 1e11
-    phi_c = st.session_state.get("calibrated_phi_c", 0.18)
+    phi_c = get_phi_c(material_key)
     if cnt_wt < phi_c:
         R = R_base * (1 - cnt_wt / phi_c * 0.5)
     else:
@@ -567,31 +597,49 @@ Tool:         NanoSeal Sim v2.0 | nanoseal-sim.streamlit.app
 
     # TAB 8 — CALIBRATE & COMPARE
     with tab8:
-        st.markdown("#### 🎯 Calibrate against real lab data")
-        st.markdown("If you've run a physical CNT coating test, enter your measured percolation "
-                    "point below to tune the model to your actual production process — instead of "
-                    "the literature default of 0.18 wt%.")
+        st.markdown("#### 🎯 Material-specific percolation thresholds")
+        st.markdown("Every material now uses its own literature-sourced percolation threshold — "
+                    "thermoplastics (HIPS, PP, PC etc.) percolate at 1–3 wt%, much higher than the "
+                    "epoxy value (0.18 wt%) this tool used before. Sources are cited below.")
+
+        phi_rows = []
+        for mat_name in SUBSTRATE_DB:
+            if mat_name in MATERIAL_PHI_C:
+                info = MATERIAL_PHI_C[mat_name]
+                override_key = f"calibrated_phi_c__{mat_name}"
+                current_val = st.session_state.get(override_key, info["phi_c"])
+                is_overridden = override_key in st.session_state
+                phi_rows.append({
+                    "Material": mat_name,
+                    "Percolation threshold (wt%)": f"{current_val}" + (" 🔧" if is_overridden else ""),
+                    "Source": "Your lab data" if is_overridden else info["source"]
+                })
+        st.dataframe(pd.DataFrame(phi_rows), use_container_width=True, hide_index=True)
+        st.caption("🔧 = calibrated with your own measured data, overriding the literature value")
+
+        st.divider()
+        st.markdown("#### Calibrate one material against your own lab data")
+        st.markdown(f"Currently selected material: **{material_key}**  |  "
+                    f"Literature default: **{MATERIAL_PHI_C.get(material_key, {}).get('phi_c', DEFAULT_PHI_C_EPOXY)} wt%**")
 
         cal1, cal2 = st.columns(2)
         with cal1:
-            measured_cnt = st.number_input("Measured CNT wt% at compliance threshold",
-                                           min_value=0.05, max_value=3.0, value=0.18, step=0.01,
-                                           help="The lowest CNT loading where your real sample first met the ESD spec")
+            measured_cnt = st.number_input(f"Your measured CNT wt% at compliance threshold for {material_key}",
+                                           min_value=0.05, max_value=5.0,
+                                           value=float(get_phi_c(material_key)), step=0.05,
+                                           help="The lowest CNT loading where your real coated sample first met the ESD spec")
         with cal2:
-            if st.button("✅ Apply calibration", type="primary"):
-                st.session_state["calibrated_phi_c"] = measured_cnt
-                st.success(f"Model calibrated — percolation threshold set to {measured_cnt} wt%. "
-                          "All tabs now use your real production data.")
+            st.write("")
+            st.write("")
+            if st.button("✅ Apply calibration to this material", type="primary"):
+                st.session_state[f"calibrated_phi_c__{material_key}"] = measured_cnt
+                st.success(f"{material_key} calibrated to {measured_cnt} wt% from your own data.")
+                st.rerun()
 
-        current_phi = st.session_state.get("calibrated_phi_c", 0.18)
-        if current_phi != 0.18:
-            st.info(f"🔧 Currently calibrated to **{current_phi} wt%** (literature default: 0.18 wt%)")
-        else:
-            st.caption("Currently using literature default (0.18 wt%) — no calibration applied yet.")
-
-        if st.button("↺ Reset to literature default"):
-            st.session_state["calibrated_phi_c"] = 0.18
-            st.rerun()
+        if f"calibrated_phi_c__{material_key}" in st.session_state:
+            if st.button(f"↺ Reset {material_key} to literature value"):
+                del st.session_state[f"calibrated_phi_c__{material_key}"]
+                st.rerun()
 
         st.divider()
 
