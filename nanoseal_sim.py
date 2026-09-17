@@ -193,6 +193,27 @@ def estimate_co2_footprint(is_domestic=True, weight_kg=1.0):
 
 def build_pdf_report(report_text, material_key, standard_key, compliant):
     """Builds a simple branded one-page PDF summary. Returns bytes."""
+
+    def sanitize_for_pdf(text, max_word_len=70):
+        # Replace box-drawing separators with plain ASCII dashes
+        text = text.replace("━", "-")
+        # Encode to latin-1, replacing anything fpdf's core font can't render
+        text = text.encode("latin-1", "replace").decode("latin-1")
+        # Force-break any single "word" longer than max_word_len (safety net
+        # against any other long unbroken run that would crash multi_cell)
+        safe_lines = []
+        for line in text.split("\n"):
+            words = line.split(" ")
+            safe_words = []
+            for w in words:
+                if len(w) > max_word_len:
+                    chunks = [w[i:i+max_word_len] for i in range(0, len(w), max_word_len)]
+                    safe_words.append(" ".join(chunks))
+                else:
+                    safe_words.append(w)
+            safe_lines.append(" ".join(safe_words))
+        return "\n".join(safe_lines)
+
     pdf = FPDF()
     pdf.add_page()
     pdf.set_fill_color(13, 27, 75)
@@ -210,18 +231,26 @@ def build_pdf_report(report_text, material_key, standard_key, compliant):
     pdf.set_xy(10, 34)
     pdf.set_font("Helvetica", "B", 11)
     status_txt = "COMPLIANT" if compliant else "NOT COMPLIANT"
-    pdf.cell(0, 8, f"Material: {material_key}  |  Standard: {standard_key}  |  Status: {status_txt}", ln=1)
+    safe_material = sanitize_for_pdf(material_key)
+    safe_standard = sanitize_for_pdf(standard_key)
+    pdf.cell(0, 8, f"Material: {safe_material}  |  Standard: {safe_standard}  |  Status: {status_txt}", ln=1)
 
     pdf.set_font("Courier", "", 8)
     pdf.set_xy(10, 44)
-    for line in report_text.split("\n"):
-        safe_line = line.encode("latin-1", "replace").decode("latin-1")
-        pdf.multi_cell(0, 4, safe_line)
+    safe_report = sanitize_for_pdf(report_text)
+    for line in safe_report.split("\n"):
+        pdf.set_x(pdf.l_margin)
+        if not line.strip():
+            pdf.ln(4)
+            continue
+        pdf.multi_cell(0, 4, line)
 
     pdf.set_y(-15)
     pdf.set_font("Helvetica", "I", 7)
     pdf.set_text_color(120, 120, 120)
-    pdf.cell(0, 10, f"Generated {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')} | Prithviraj Hiralal Chowdhary, M.Sc. Nanoscience, University of Glasgow", 0, 0, 'C')
+    footer = "Generated " + datetime.datetime.now().strftime('%Y-%m-%d %H:%M') + \
+              " | Prithviraj Hiralal Chowdhary, M.Sc. Nanoscience, University of Glasgow"
+    pdf.cell(0, 10, sanitize_for_pdf(footer), 0, 0, 'C')
 
     return bytes(pdf.output(dest='S'))
 
